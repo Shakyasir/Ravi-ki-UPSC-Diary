@@ -17,7 +17,7 @@ import {
 
 export const DEFAULT_PROFILE: UserProfile = {
   name: 'Ravi',
-  displayName: 'IAS RAVI',
+  displayName: 'IAS Ravi Ji',
   role: 'UPSC 2029 Aspirant',
   mission: 'First Attempt Preparation',
   tagline: 'चलो कुछ ऐसा कर जाएँ, कि नाम हमारा मिसाल बन जाए।',

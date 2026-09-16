@@ -4,8 +4,8 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 let supabaseInstance: SupabaseClient | null = null;
 
 export function getSupabaseConfig(): { url: string; anonKey: string } {
-  const localUrl = localStorage.getItem('ravi_supabase_url') || '';
-  const localKey = localStorage.getItem('ravi_supabase_anon_key') || '';
+  const localUrl = typeof window !== 'undefined' ? localStorage.getItem('ravi_supabase_url') || '' : '';
+  const localKey = typeof window !== 'undefined' ? localStorage.getItem('ravi_supabase_anon_key') || '' : '';
   const envUrl = (import.meta as any).env?.VITE_SUPABASE_URL || '';
   const envKey = (import.meta as any).env?.VITE_SUPABASE_ANON_KEY || '';
 
@@ -31,7 +31,8 @@ export function getSupabase(): SupabaseClient | null {
         auth: {
           persistSession: true,
           autoRefreshToken: true,
-        }
+          detectSessionInUrl: true,
+        },
       });
     } catch (e) {
       console.error('Error initializing Supabase client:', e);
@@ -42,20 +43,25 @@ export function getSupabase(): SupabaseClient | null {
 }
 
 export function updateSupabaseCredentials(url: string, anonKey: string) {
-  localStorage.setItem('ravi_supabase_url', url);
-  localStorage.setItem('ravi_supabase_anon_key', anonKey);
+  if (typeof window !== 'undefined') {
+    localStorage.setItem('ravi_supabase_url', url);
+    localStorage.setItem('ravi_supabase_anon_key', anonKey);
+  }
   supabaseInstance = null; // force re-creation
 }
 
-export const SUPABASE_SQL_SCHEMA = `-- RAVI KI UPSC DIARY — Supabase Schema & Row Level Security (RLS)
--- Run this in your Supabase SQL Editor to set up all tables and security policies:
+export const SUPABASE_SQL_SCHEMA = `-- ============================================================
+-- RAVI KI UPSC DIARY — COMPLETE SUPABASE DATABASE SCHEMA & RLS
+-- ============================================================
+-- Copy and paste this script into your Supabase SQL Editor:
+-- (Supabase Dashboard -> Project -> SQL Editor -> New Query -> Run)
 
--- 1. Profiles & Settings
+-- 1. Profiles Table
 create table if not exists public.profiles (
-  id uuid primary key default gen_random_uuid(),
-  user_id uuid references auth.users on delete cascade,
+  id text primary key default gen_random_uuid()::text,
+  user_id uuid references auth.users on delete cascade not null unique,
   name text not null default 'Ravi',
-  display_name text not null default 'IAS RAVI',
+  display_name text not null default 'IAS Ravi Ji',
   role text default 'UPSC 2029 Aspirant',
   mission text default 'First Attempt Preparation',
   tagline text default 'चलो कुछ ऐसा कर जाएँ, कि नाम हमारा मिसाल बन जाए।',
@@ -74,10 +80,10 @@ create table if not exists public.profiles (
   updated_at timestamptz default now()
 );
 
--- 2. Daily Schedule
+-- 2. Daily Schedule Table
 create table if not exists public.daily_schedule (
-  id uuid primary key default gen_random_uuid(),
-  user_id uuid references auth.users on delete cascade,
+  id text primary key default gen_random_uuid()::text,
+  user_id uuid references auth.users on delete cascade not null,
   day_of_week text not null default 'all',
   start_time text not null,
   end_time text not null,
@@ -91,17 +97,31 @@ create table if not exists public.daily_schedule (
   created_at timestamptz default now()
 );
 
--- 3. Study Entries (UPSC Study Register)
+-- 3. Today Tasks Table
+create table if not exists public.today_tasks (
+  id text primary key default gen_random_uuid()::text,
+  user_id uuid references auth.users on delete cascade not null,
+  date date not null,
+  title text not null,
+  duration_hours numeric default 1.0,
+  category text default 'GS',
+  completed boolean default false,
+  order_num integer default 0,
+  notes text,
+  created_at timestamptz default now()
+);
+
+-- 4. Study Entries (UPSC Study Register)
 create table if not exists public.study_entries (
-  id uuid primary key default gen_random_uuid(),
-  user_id uuid references auth.users on delete cascade,
+  id text primary key default gen_random_uuid()::text,
+  user_id uuid references auth.users on delete cascade not null,
   date date not null,
   subject text not null,
   topic text not null,
   study_type text not null,
   start_time text,
   end_time text,
-  duration_hours numeric not null,
+  duration_hours numeric not null default 0,
   source text,
   book text,
   lecture text,
@@ -116,11 +136,12 @@ create table if not exists public.study_entries (
   created_at timestamptz default now()
 );
 
--- 4. Subjects & Topics
+-- 5. Subjects & Topics
 create table if not exists public.subjects (
-  id uuid primary key default gen_random_uuid(),
-  user_id uuid references auth.users on delete cascade,
+  id text primary key default gen_random_uuid()::text,
+  user_id uuid references auth.users on delete cascade not null,
   name text not null,
+  paper text,
   category text not null default 'GS',
   study_hours numeric default 0,
   total_topics integer default 0,
@@ -134,10 +155,10 @@ create table if not exists public.subjects (
   created_at timestamptz default now()
 );
 
--- 5. Books & Resources
+-- 6. Books & Resources
 create table if not exists public.books (
-  id uuid primary key default gen_random_uuid(),
-  user_id uuid references auth.users on delete cascade,
+  id text primary key default gen_random_uuid()::text,
+  user_id uuid references auth.users on delete cascade not null,
   name text not null,
   subject text not null,
   author text,
@@ -150,26 +171,28 @@ create table if not exists public.books (
   created_at timestamptz default now()
 );
 
--- 6. PYQ Entries
+-- 7. PYQ Entries
 create table if not exists public.pyq_entries (
-  id uuid primary key default gen_random_uuid(),
-  user_id uuid references auth.users on delete cascade,
+  id text primary key default gen_random_uuid()::text,
+  user_id uuid references auth.users on delete cascade not null,
   year integer not null,
   exam text not null default 'Prelims',
+  paper text,
   subject text not null,
   topic text not null,
   question text not null,
   attempted boolean default true,
   correct boolean default true,
+  status text default 'Solved',
   explanation text,
   revision_required boolean default false,
   created_at timestamptz default now()
 );
 
--- 7. MCQ Entries
+-- 8. MCQ Entries
 create table if not exists public.mcq_entries (
-  id uuid primary key default gen_random_uuid(),
-  user_id uuid references auth.users on delete cascade,
+  id text primary key default gen_random_uuid()::text,
+  user_id uuid references auth.users on delete cascade not null,
   date date not null,
   subject text not null,
   topic text not null,
@@ -183,10 +206,10 @@ create table if not exists public.mcq_entries (
   created_at timestamptz default now()
 );
 
--- 8. Tests & Mocks
+-- 9. Tests & Mocks
 create table if not exists public.test_entries (
-  id uuid primary key default gen_random_uuid(),
-  user_id references auth.users on delete cascade,
+  id text primary key default gen_random_uuid()::text,
+  user_id uuid references auth.users on delete cascade not null,
   test_name text not null,
   date date not null,
   subject text not null,
@@ -204,10 +227,10 @@ create table if not exists public.test_entries (
   created_at timestamptz default now()
 );
 
--- 9. Answer Writing
+-- 10. Answer Writing
 create table if not exists public.answer_writing (
-  id uuid primary key default gen_random_uuid(),
-  user_id uuid references auth.users on delete cascade,
+  id text primary key default gen_random_uuid()::text,
+  user_id uuid references auth.users on delete cascade not null,
   date date not null,
   question text not null,
   subject text not null,
@@ -222,10 +245,10 @@ create table if not exists public.answer_writing (
   created_at timestamptz default now()
 );
 
--- 10. Daily Diary
+-- 11. Daily Diary
 create table if not exists public.diary_entries (
-  id uuid primary key default gen_random_uuid(),
-  user_id uuid references auth.users on delete cascade,
+  id text primary key default gen_random_uuid()::text,
+  user_id uuid references auth.users on delete cascade not null,
   date date not null,
   what_i_learned text,
   what_i_completed text,
@@ -239,10 +262,10 @@ create table if not exists public.diary_entries (
   updated_at timestamptz default now()
 );
 
--- 11. Goals
+-- 12. Goals
 create table if not exists public.goals (
-  id uuid primary key default gen_random_uuid(),
-  user_id uuid references auth.users on delete cascade,
+  id text primary key default gen_random_uuid()::text,
+  user_id uuid references auth.users on delete cascade not null,
   title text not null,
   category text not null,
   deadline date,
@@ -252,10 +275,10 @@ create table if not exists public.goals (
   created_at timestamptz default now()
 );
 
--- 12. Backlog
+-- 13. Backlog
 create table if not exists public.backlog (
-  id uuid primary key default gen_random_uuid(),
-  user_id uuid references auth.users on delete cascade,
+  id text primary key default gen_random_uuid()::text,
+  user_id uuid references auth.users on delete cascade not null,
   task text not null,
   category text not null,
   priority text default 'Medium',
@@ -265,9 +288,26 @@ create table if not exists public.backlog (
   created_at timestamptz default now()
 );
 
--- 13. Enable Row Level Security (RLS) on all tables
+-- 14. Calendar Events
+create table if not exists public.calendar_events (
+  id text primary key default gen_random_uuid()::text,
+  user_id uuid references auth.users on delete cascade not null,
+  title text not null,
+  date date not null,
+  start_time text,
+  end_time text,
+  category text default 'Study',
+  description text,
+  status text default 'Scheduled',
+  created_at timestamptz default now()
+);
+
+-- ============================================================
+-- ROW LEVEL SECURITY (RLS) POLICIES
+-- ============================================================
 alter table public.profiles enable row level security;
 alter table public.daily_schedule enable row level security;
+alter table public.today_tasks enable row level security;
 alter table public.study_entries enable row level security;
 alter table public.subjects enable row level security;
 alter table public.books enable row level security;
@@ -278,18 +318,40 @@ alter table public.answer_writing enable row level security;
 alter table public.diary_entries enable row level security;
 alter table public.goals enable row level security;
 alter table public.backlog enable row level security;
+alter table public.calendar_events enable row level security;
 
--- Policies: Users can only view & modify their own rows
-create policy "Users manage their own profiles" on public.profiles for all using (auth.uid() = user_id);
-create policy "Users manage their own schedule" on public.daily_schedule for all using (auth.uid() = user_id);
-create policy "Users manage their own study entries" on public.study_entries for all using (auth.uid() = user_id);
-create policy "Users manage their own subjects" on public.subjects for all using (auth.uid() = user_id);
-create policy "Users manage their own books" on public.books for all using (auth.uid() = user_id);
-create policy "Users manage their own pyqs" on public.pyq_entries for all using (auth.uid() = user_id);
-create policy "Users manage their own mcqs" on public.mcq_entries for all using (auth.uid() = user_id);
-create policy "Users manage their own tests" on public.test_entries for all using (auth.uid() = user_id);
-create policy "Users manage their own answers" on public.answer_writing for all using (auth.uid() = user_id);
-create policy "Users manage their own diary" on public.diary_entries for all using (auth.uid() = user_id);
-create policy "Users manage their own goals" on public.goals for all using (auth.uid() = user_id);
-create policy "Users manage their own backlog" on public.backlog for all using (auth.uid() = user_id);
+-- Drop existing policies if any to allow safe re-running
+do $$ 
+begin
+  drop policy if exists "Users manage their own profiles" on public.profiles;
+  drop policy if exists "Users manage their own schedule" on public.daily_schedule;
+  drop policy if exists "Users manage their own today_tasks" on public.today_tasks;
+  drop policy if exists "Users manage their own study entries" on public.study_entries;
+  drop policy if exists "Users manage their own subjects" on public.subjects;
+  drop policy if exists "Users manage their own books" on public.books;
+  drop policy if exists "Users manage their own pyqs" on public.pyq_entries;
+  drop policy if exists "Users manage their own mcqs" on public.mcq_entries;
+  drop policy if exists "Users manage their own tests" on public.test_entries;
+  drop policy if exists "Users manage their own answers" on public.answer_writing;
+  drop policy if exists "Users manage their own diary" on public.diary_entries;
+  drop policy if exists "Users manage their own goals" on public.goals;
+  drop policy if exists "Users manage their own backlog" on public.backlog;
+  drop policy if exists "Users manage their own calendar_events" on public.calendar_events;
+end $$;
+
+-- Policies: Users can only select, insert, update, delete their own records
+create policy "Users manage their own profiles" on public.profiles for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+create policy "Users manage their own schedule" on public.daily_schedule for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+create policy "Users manage their own today_tasks" on public.today_tasks for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+create policy "Users manage their own study entries" on public.study_entries for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+create policy "Users manage their own subjects" on public.subjects for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+create policy "Users manage their own books" on public.books for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+create policy "Users manage their own pyqs" on public.pyq_entries for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+create policy "Users manage their own mcqs" on public.mcq_entries for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+create policy "Users manage their own tests" on public.test_entries for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+create policy "Users manage their own answers" on public.answer_writing for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+create policy "Users manage their own diary" on public.diary_entries for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+create policy "Users manage their own goals" on public.goals for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+create policy "Users manage their own backlog" on public.backlog for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+create policy "Users manage their own calendar_events" on public.calendar_events for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 `;

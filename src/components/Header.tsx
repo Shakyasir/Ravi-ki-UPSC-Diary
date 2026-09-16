@@ -11,19 +11,30 @@ import {
   AlertTriangle,
   Clock,
   LogOut,
-  ChevronDown
+  ChevronDown,
+  RefreshCw,
+  Database
 } from 'lucide-react';
 import { store, getSystemDateString, getEffectiveMode, getDaysUntilFullTime } from '../lib/storage';
 import { isSupabaseConfigured } from '../lib/supabaseClient';
+import { subscribeToSyncStatus, SyncStatus } from '../lib/supabaseSync';
 import { RaviAvatar } from './RaviAvatar';
 
 interface HeaderProps {
+  currentUser?: any;
+  onLogout?: () => void;
   onOpenSearch: () => void;
   onOpenAuth: () => void;
   onNavigate: (tab: string) => void;
 }
 
-export const Header: React.FC<HeaderProps> = ({ onOpenSearch, onOpenAuth, onNavigate }) => {
+export const Header: React.FC<HeaderProps> = ({ 
+  currentUser,
+  onLogout,
+  onOpenSearch, 
+  onOpenAuth, 
+  onNavigate 
+}) => {
   const profile = store.getProfile();
   const metrics = store.getMetrics();
   const mode = getEffectiveMode(profile);
@@ -31,10 +42,25 @@ export const Header: React.FC<HeaderProps> = ({ onOpenSearch, onOpenAuth, onNavi
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const isCloudConnected = isSupabaseConfigured();
 
+  const [syncStatus, setSyncStatus] = useState<SyncStatus>({
+    isSyncing: false,
+    isMigrating: false,
+    lastSyncTime: null,
+    error: null,
+    migrationSuccessMessage: null,
+    migrationErrorMessage: null,
+  });
+
+  useEffect(() => {
+    return subscribeToSyncStatus((status) => {
+      setSyncStatus(status);
+    });
+  }, []);
+
   // Dynamic greeting based on current hour
   const getGreeting = () => {
     const hour = new Date().getHours();
-    const name = profile.displayName || 'IAS RAVI';
+    const name = profile.displayName || 'IAS Ravi Ji';
     if (hour >= 4 && hour < 12) {
       return `Good Morning, ${name} 👋`;
     } else if (hour >= 12 && hour < 17) {
@@ -72,7 +98,7 @@ export const Header: React.FC<HeaderProps> = ({ onOpenSearch, onOpenAuth, onNavi
     {
       id: 'notif-backlog',
       title: 'Pending Backlog Items',
-      desc: `${metrics.pendingBacklog} pending high-priority topics need clearance.`,
+      desc: `${metrics.pendingBacklogCount} pending high-priority topics need clearance.`,
       icon: AlertTriangle,
       color: 'text-rose-500 bg-rose-50',
       time: 'Urgent'
@@ -128,7 +154,7 @@ export const Header: React.FC<HeaderProps> = ({ onOpenSearch, onOpenAuth, onNavi
               </span>
             </div>
 
-            <div className="flex items-center gap-2 mt-0.5 text-xs text-slate-500 font-medium">
+            <div className="flex items-center gap-2 mt-0.5 text-xs text-slate-500 font-medium flex-wrap">
               <span>{getFormattedDate()}</span>
               <span>•</span>
               <p className="italic text-slate-700 font-hindi font-medium tracking-wide">
@@ -138,8 +164,38 @@ export const Header: React.FC<HeaderProps> = ({ onOpenSearch, onOpenAuth, onNavi
           </div>
         </div>
 
-        {/* Right Side: Global Search, Quick Stats, Notifications & Profile Avatar */}
-        <div className="flex items-center justify-between md:justify-end gap-2.5">
+        {/* Right Side: Global Search, Cloud Sync Status, Notifications & Profile Avatar */}
+        <div className="flex items-center justify-between md:justify-end gap-2.5 flex-wrap">
+          {/* Cloud Sync Status Indicator */}
+          <button
+            type="button"
+            onClick={() => store.syncWithCloud()}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border text-xs font-semibold transition-all cursor-pointer bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700"
+            title={syncStatus.lastSyncTime ? `Last Synced: ${syncStatus.lastSyncTime}. Click to Sync Now` : 'Click to sync with Supabase'}
+          >
+            {syncStatus.isSyncing || syncStatus.isMigrating ? (
+              <>
+                <RefreshCw className="w-3.5 h-3.5 text-indigo-600 animate-spin" />
+                <span className="hidden sm:inline text-indigo-700 font-medium">Syncing...</span>
+              </>
+            ) : syncStatus.error ? (
+              <>
+                <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
+                <span className="hidden sm:inline text-amber-700">Sync Offline</span>
+              </>
+            ) : currentUser ? (
+              <>
+                <Cloud className="w-3.5 h-3.5 text-emerald-600" />
+                <span className="hidden sm:inline text-emerald-700 font-medium">Supabase Synced</span>
+              </>
+            ) : (
+              <>
+                <Database className="w-3.5 h-3.5 text-slate-500" />
+                <span className="hidden sm:inline text-slate-600 font-medium">Cloud Storage</span>
+              </>
+            )}
+          </button>
+
           {/* Quick Streak Pill */}
           <div 
             onClick={() => onNavigate('analytics')} 
@@ -158,7 +214,7 @@ export const Header: React.FC<HeaderProps> = ({ onOpenSearch, onOpenAuth, onNavi
             title="Global Search (Ctrl + K)"
           >
             <Search className="w-3.5 h-3.5 text-slate-500" />
-            <span className="hidden lg:inline">Search records, notes, PYQs...</span>
+            <span className="hidden lg:inline">Search records, notes...</span>
             <kbd className="hidden lg:inline-block px-1.5 py-0.5 text-[10px] font-mono bg-white text-slate-500 rounded border border-slate-200 shadow-2xs">⌘K</kbd>
           </button>
 
@@ -202,7 +258,7 @@ export const Header: React.FC<HeaderProps> = ({ onOpenSearch, onOpenAuth, onNavi
                 <div className="pt-2 px-4 border-t border-slate-100 text-center">
                   <button
                     onClick={() => { setNotificationsOpen(false); onNavigate('backlog'); }}
-                    className="text-xs font-semibold text-indigo-600 hover:text-indigo-800 transition-colors"
+                    className="text-xs font-semibold text-indigo-600 hover:text-indigo-800 transition-colors cursor-pointer"
                   >
                     View All Backlog & Targets →
                   </button>
@@ -221,11 +277,11 @@ export const Header: React.FC<HeaderProps> = ({ onOpenSearch, onOpenAuth, onNavi
               <RaviAvatar size="sm" showBadge />
               <div className="hidden sm:block text-left">
                 <div className="text-xs font-bold text-slate-900 leading-tight flex items-center gap-1">
-                  {profile.displayName || 'IAS RAVI'}
+                  {profile.displayName || 'IAS Ravi Ji'}
                   <ChevronDown className="w-3 h-3 text-slate-400" />
                 </div>
                 <div className="text-[10px] text-slate-500 font-medium leading-none">
-                  {profile.role}
+                  {currentUser?.email || profile.role}
                 </div>
               </div>
             </button>
@@ -233,8 +289,8 @@ export const Header: React.FC<HeaderProps> = ({ onOpenSearch, onOpenAuth, onNavi
             {profileDropdownOpen && (
               <div className="absolute right-0 mt-2 w-64 bg-white rounded-2xl shadow-xl border border-slate-200 py-2 z-50">
                 <div className="px-4 py-2.5 border-b border-slate-100">
-                  <p className="text-xs font-bold text-slate-900">{profile.displayName}</p>
-                  <p className="text-[11px] text-slate-500">{profile.mission}</p>
+                  <p className="text-xs font-bold text-slate-900">{profile.displayName || 'IAS Ravi Ji'}</p>
+                  <p className="text-[11px] text-slate-500 truncate">{currentUser?.email || profile.mission}</p>
                   <div className="mt-2 flex items-center gap-1.5 text-[11px] text-indigo-700 bg-indigo-50/70 p-1.5 rounded-lg">
                     <Sparkles className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
                     <span className="truncate">Target: UPSC {profile.targetYear}</span>
@@ -244,14 +300,14 @@ export const Header: React.FC<HeaderProps> = ({ onOpenSearch, onOpenAuth, onNavi
                 <div className="py-1">
                   <button
                     onClick={() => { setProfileDropdownOpen(false); onNavigate('settings'); }}
-                    className="w-full px-4 py-2 text-left text-xs font-medium text-slate-700 hover:bg-slate-50 flex items-center gap-2.5"
+                    className="w-full px-4 py-2 text-left text-xs font-medium text-slate-700 hover:bg-slate-50 flex items-center gap-2.5 cursor-pointer"
                   >
                     <SettingsIcon className="w-4 h-4 text-slate-500" />
                     Preparation & Timetable Settings
                   </button>
                   <button
                     onClick={() => { setProfileDropdownOpen(false); onOpenAuth(); }}
-                    className="w-full px-4 py-2 text-left text-xs font-medium text-slate-700 hover:bg-slate-50 flex items-center gap-2.5"
+                    className="w-full px-4 py-2 text-left text-xs font-medium text-slate-700 hover:bg-slate-50 flex items-center gap-2.5 cursor-pointer"
                   >
                     <Cloud className={`w-4 h-4 ${isCloudConnected ? 'text-emerald-500' : 'text-slate-400'}`} />
                     <span>Supabase Cloud Sync</span>
@@ -259,21 +315,44 @@ export const Header: React.FC<HeaderProps> = ({ onOpenSearch, onOpenAuth, onNavi
                       <span className="ml-auto text-[10px] bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded font-semibold">Active</span>
                     )}
                   </button>
-                </div>
-
-                <div className="pt-1 border-t border-slate-100">
                   <button
                     onClick={() => {
                       setProfileDropdownOpen(false);
-                      if (window.confirm('Reset all local data back to initial UPSC 2029 configuration?')) {
+                      store.syncWithCloud();
+                    }}
+                    className="w-full px-4 py-2 text-left text-xs font-medium text-indigo-700 hover:bg-indigo-50 flex items-center gap-2.5 cursor-pointer"
+                  >
+                    <RefreshCw className="w-4 h-4 text-indigo-600" />
+                    <span>Sync with Supabase Now</span>
+                  </button>
+                </div>
+
+                <div className="pt-1 border-t border-slate-100 space-y-0.5">
+                  {currentUser && onLogout && (
+                    <button
+                      onClick={() => {
+                        setProfileDropdownOpen(false);
+                        onLogout();
+                      }}
+                      className="w-full px-4 py-2 text-left text-xs font-bold text-amber-700 hover:bg-amber-50 flex items-center gap-2.5 cursor-pointer"
+                    >
+                      <LogOut className="w-4 h-4 text-amber-600" />
+                      Sign Out (Supabase)
+                    </button>
+                  )}
+
+                  <button
+                    onClick={() => {
+                      setProfileDropdownOpen(false);
+                      if (window.confirm('Reset all local cached data back to initial UPSC 2029 configuration?')) {
                         store.resetAll();
                         window.location.reload();
                       }
                     }}
-                    className="w-full px-4 py-2 text-left text-xs font-medium text-rose-600 hover:bg-rose-50 flex items-center gap-2.5"
+                    className="w-full px-4 py-2 text-left text-xs font-medium text-rose-600 hover:bg-rose-50 flex items-center gap-2.5 cursor-pointer"
                   >
-                    <LogOut className="w-4 h-4" />
-                    Reset to Default Data
+                    <AlertTriangle className="w-4 h-4" />
+                    Reset Cached Data
                   </button>
                 </div>
               </div>

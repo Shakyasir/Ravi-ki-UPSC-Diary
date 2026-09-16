@@ -37,7 +37,37 @@ import {
   DEFAULT_ANSWERS,
   DEFAULT_DIARY_ENTRIES
 } from './constants';
-import { getSupabase } from './supabaseClient';
+import {
+  fetchUserDataFromSupabase,
+  migrateLocalDataToSupabase,
+  syncUpsertProfile,
+  syncUpsertStudyEntry,
+  syncDeleteStudyEntry,
+  syncUpsertScheduleItem,
+  syncDeleteScheduleItem,
+  syncUpsertTask,
+  syncDeleteTask,
+  syncUpsertSubject,
+  syncDeleteSubject,
+  syncUpsertBook,
+  syncDeleteBook,
+  syncUpsertPYQ,
+  syncDeletePYQ,
+  syncUpsertMCQ,
+  syncDeleteMCQ,
+  syncUpsertTest,
+  syncDeleteTest,
+  syncUpsertAnswer,
+  syncDeleteAnswer,
+  syncUpsertDiary,
+  syncDeleteDiary,
+  syncUpsertGoal,
+  syncDeleteGoal,
+  syncUpsertBacklog,
+  syncDeleteBacklog,
+  syncUpsertCalendarEvent,
+  syncDeleteCalendarEvent,
+} from './supabaseSync';
 
 type Listener = () => void;
 const listeners = new Set<Listener>();
@@ -53,10 +83,13 @@ export function subscribeToStore(listener: Listener) {
   };
 }
 
+// Current active Supabase authenticated user ID
+let currentUserId: string | null = null;
+
 // Helper to get / set typed localStorage
 function getStored<T>(key: string, defaultValue: T): T {
   try {
-    const raw = localStorage.getItem(`ravi_upsc_${key}`);
+    const raw = typeof window !== 'undefined' ? localStorage.getItem(`ravi_upsc_${key}`) : null;
     if (!raw || raw === 'undefined' || raw === 'null') return defaultValue;
     const parsed = JSON.parse(raw);
     if (parsed === null || parsed === undefined) return defaultValue;
@@ -70,7 +103,9 @@ function getStored<T>(key: string, defaultValue: T): T {
 
 function setStored<T>(key: string, value: T): void {
   try {
-    localStorage.setItem(`ravi_upsc_${key}`, JSON.stringify(value));
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(`ravi_upsc_${key}`, JSON.stringify(value));
+    }
     notify();
   } catch (err) {
     console.error(`Error saving key ravi_upsc_${key}:`, err);
@@ -80,7 +115,6 @@ function setStored<T>(key: string, value: T): void {
 // Current date formatted as YYYY-MM-DD (UPSC 2026 reference default: 2026-09-16)
 export function getSystemDateString(): string {
   const d = new Date();
-  // If year is 2026 or later, use actual date; if earlier, default to 2026-09-16 as specified in metadata
   const y = d.getFullYear() >= 2026 ? d.getFullYear() : 2026;
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
@@ -118,15 +152,100 @@ export const store = {
     return subscribeToStore(listener);
   },
 
+  // 0. User & Supabase Session Management
+  setCurrentUser(userId: string | null) {
+    currentUserId = userId;
+    if (userId) {
+      this.syncWithCloud(userId);
+    }
+  },
+
+  getCurrentUserId(): string | null {
+    return currentUserId;
+  },
+
+  async syncWithCloud(userIdParam?: string) {
+    const uid = userIdParam || currentUserId;
+    if (!uid) return;
+
+    try {
+      const cloudData = await fetchUserDataFromSupabase(uid);
+      if (cloudData) {
+        const hasCloudRecords = 
+          (cloudData.studyEntries && cloudData.studyEntries.length > 0) ||
+          (cloudData.subjects && cloudData.subjects.length > 0) ||
+          Boolean(cloudData.profile);
+
+        const isMigrated = typeof window !== 'undefined' && localStorage.getItem(`ravi_upsc_migrated_${uid}`) === 'true';
+
+        // If user has no records in Supabase yet, safely migrate existing browser data
+        if (!hasCloudRecords && !isMigrated) {
+          const localPayload = {
+            profile: this.getProfile(),
+            schedule: this.getSchedule(),
+            todayTasks: this.getTodayTasks(),
+            studyEntries: this.getStudyEntries(),
+            subjects: this.getSubjects(),
+            books: this.getBooks(),
+            pyqs: this.getPYQs(),
+            mcqs: this.getMCQs(),
+            tests: this.getTests(),
+            answers: this.getAnswers(),
+            diaryEntries: this.getDiaryEntries(),
+            goals: this.getGoals(),
+            backlog: this.getBacklog(),
+            calendarEvents: this.getCalendarEvents()
+          };
+          const res = await migrateLocalDataToSupabase(uid, localPayload);
+          if (res.success && typeof window !== 'undefined') {
+            localStorage.setItem(`ravi_upsc_migrated_${uid}`, 'true');
+          }
+        } else if (hasCloudRecords) {
+          // Hydrate in-memory state from cloud data
+          if (cloudData.profile) {
+            setStored('profile', {
+              ...this.getProfile(),
+              ...cloudData.profile,
+              displayName: 'IAS Ravi Ji'
+            });
+          }
+          if (cloudData.schedule && cloudData.schedule.length > 0) setStored('schedule', cloudData.schedule);
+          if (cloudData.todayTasks && cloudData.todayTasks.length > 0) setStored('today_tasks', cloudData.todayTasks);
+          if (cloudData.studyEntries) setStored('study_entries', cloudData.studyEntries);
+          if (cloudData.subjects && cloudData.subjects.length > 0) setStored('subjects', cloudData.subjects);
+          if (cloudData.books && cloudData.books.length > 0) setStored('books', cloudData.books);
+          if (cloudData.pyqs && cloudData.pyqs.length > 0) setStored('pyqs', cloudData.pyqs);
+          if (cloudData.mcqs && cloudData.mcqs.length > 0) setStored('mcqs', cloudData.mcqs);
+          if (cloudData.tests && cloudData.tests.length > 0) setStored('tests', cloudData.tests);
+          if (cloudData.answers && cloudData.answers.length > 0) setStored('answers', cloudData.answers);
+          if (cloudData.diaryEntries && cloudData.diaryEntries.length > 0) setStored('diary_entries', cloudData.diaryEntries);
+          if (cloudData.goals && cloudData.goals.length > 0) setStored('goals', cloudData.goals);
+          if (cloudData.backlog && cloudData.backlog.length > 0) setStored('backlog', cloudData.backlog);
+          if (cloudData.calendarEvents && cloudData.calendarEvents.length > 0) setStored('calendar_events', cloudData.calendarEvents);
+          notify();
+        }
+      }
+    } catch (e) {
+      console.error('Error during cloud sync:', e);
+    }
+  },
+
   // 1. Profile
   getProfile(): UserProfile {
     const stored = getStored<UserProfile>('profile', DEFAULT_PROFILE);
-    return { ...DEFAULT_PROFILE, ...(stored || {}) };
+    return {
+      ...DEFAULT_PROFILE,
+      ...(stored || {}),
+      displayName: 'IAS Ravi Ji' // Strict requirement
+    };
   },
   updateProfile(updates: Partial<UserProfile>): UserProfile {
     const current = this.getProfile();
-    const updated = { ...current, ...updates };
+    const updated = { ...current, ...updates, displayName: 'IAS Ravi Ji' };
     setStored('profile', updated);
+    if (currentUserId) {
+      syncUpsertProfile(updated, currentUserId);
+    }
     return updated;
   },
 
@@ -139,21 +258,35 @@ export const store = {
   },
   saveSchedule(items: ScheduleItem[]): void {
     setStored('schedule', items);
+    if (currentUserId) {
+      items.forEach(it => syncUpsertScheduleItem(it, currentUserId!));
+    }
   },
   addScheduleItem(item: Omit<ScheduleItem, 'id'>): ScheduleItem {
     const items = this.getSchedule();
     const newItem: ScheduleItem = { ...item, id: `sched-${Date.now()}` };
-    this.saveSchedule([...items, newItem]);
+    const updated = [...items, newItem];
+    setStored('schedule', updated);
+    if (currentUserId) {
+      syncUpsertScheduleItem(newItem, currentUserId);
+    }
     return newItem;
   },
   updateScheduleItem(id: string, updates: Partial<ScheduleItem>): void {
     const items = this.getSchedule();
     const updated = items.map(it => it.id === id ? { ...it, ...updates } : it);
-    this.saveSchedule(updated);
+    setStored('schedule', updated);
+    const it = updated.find(x => x.id === id);
+    if (it && currentUserId) {
+      syncUpsertScheduleItem(it, currentUserId);
+    }
   },
   deleteScheduleItem(id: string): void {
     const items = this.getSchedule().filter(it => it.id !== id);
-    this.saveSchedule(items);
+    setStored('schedule', items);
+    if (currentUserId) {
+      syncDeleteScheduleItem(id, currentUserId);
+    }
   },
   resetScheduleToDefault(mode?: PreparationMode): void {
     const effective = mode || getEffectiveMode(this.getProfile());
@@ -167,18 +300,26 @@ export const store = {
   },
   saveTodayTasks(tasks: TodayTask[]): void {
     setStored('today_tasks', tasks);
+    if (currentUserId) {
+      tasks.forEach(t => syncUpsertTask(t, currentUserId!));
+    }
   },
   toggleTask(id: string): boolean {
     const tasks = this.getTodayTasks();
     let isCompleted = false;
+    let modifiedTask: TodayTask | null = null;
     const updated = tasks.map(t => {
       if (t.id === id) {
         isCompleted = !t.completed;
-        return { ...t, completed: isCompleted };
+        modifiedTask = { ...t, completed: isCompleted };
+        return modifiedTask;
       }
       return t;
     });
-    this.saveTodayTasks(updated);
+    setStored('today_tasks', updated);
+    if (modifiedTask && currentUserId) {
+      syncUpsertTask(modifiedTask, currentUserId);
+    }
     return isCompleted;
   },
   addTodayTask(task: Omit<TodayTask, 'id' | 'order'>): TodayTask {
@@ -188,12 +329,19 @@ export const store = {
       id: `task-${Date.now()}`,
       order: tasks.length + 1
     };
-    this.saveTodayTasks([...tasks, newTask]);
+    const updated = [...tasks, newTask];
+    setStored('today_tasks', updated);
+    if (currentUserId) {
+      syncUpsertTask(newTask, currentUserId);
+    }
     return newTask;
   },
   deleteTodayTask(id: string): void {
     const tasks = this.getTodayTasks().filter(t => t.id !== id);
-    this.saveTodayTasks(tasks);
+    setStored('today_tasks', tasks);
+    if (currentUserId) {
+      syncDeleteTask(id, currentUserId);
+    }
   },
 
   // 4. Study Register
@@ -210,17 +358,27 @@ export const store = {
     const updated = [newEntry, ...entries];
     setStored('study_entries', updated);
     this.recalculateSubjectStats();
+    if (currentUserId) {
+      syncUpsertStudyEntry(newEntry, currentUserId);
+    }
     return newEntry;
   },
   updateStudyEntry(id: string, updates: Partial<StudyEntry>): void {
     const entries = this.getStudyEntries().map(e => e.id === id ? { ...e, ...updates } : e);
     setStored('study_entries', entries);
     this.recalculateSubjectStats();
+    const e = entries.find(x => x.id === id);
+    if (e && currentUserId) {
+      syncUpsertStudyEntry(e, currentUserId);
+    }
   },
   deleteStudyEntry(id: string): void {
     const entries = this.getStudyEntries().filter(e => e.id !== id);
     setStored('study_entries', entries);
     this.recalculateSubjectStats();
+    if (currentUserId) {
+      syncDeleteStudyEntry(id, currentUserId);
+    }
   },
 
   // 5. Subjects
@@ -229,20 +387,34 @@ export const store = {
   },
   saveSubjects(subjects: SubjectItem[]): void {
     setStored('subjects', subjects);
+    if (currentUserId) {
+      subjects.forEach(s => syncUpsertSubject(s, currentUserId!));
+    }
   },
   addSubject(subject: Omit<SubjectItem, 'id'>): SubjectItem {
     const subjects = this.getSubjects();
     const newSubject: SubjectItem = { ...subject, id: `sub-${Date.now()}` };
-    this.saveSubjects([...subjects, newSubject]);
+    const updated = [...subjects, newSubject];
+    setStored('subjects', updated);
+    if (currentUserId) {
+      syncUpsertSubject(newSubject, currentUserId);
+    }
     return newSubject;
   },
   updateSubject(id: string, updates: Partial<SubjectItem>): void {
     const subjects = this.getSubjects().map(s => s.id === id ? { ...s, ...updates } : s);
-    this.saveSubjects(subjects);
+    setStored('subjects', subjects);
+    const sub = subjects.find(s => s.id === id);
+    if (sub && currentUserId) {
+      syncUpsertSubject(sub, currentUserId);
+    }
   },
   deleteSubject(id: string): void {
     const subjects = this.getSubjects().filter(s => s.id !== id);
-    this.saveSubjects(subjects);
+    setStored('subjects', subjects);
+    if (currentUserId) {
+      syncDeleteSubject(id, currentUserId);
+    }
   },
   resetSubjectsToDefault(): void {
     this.saveSubjects(DEFAULT_SUBJECTS);
@@ -273,11 +445,18 @@ export const store = {
   },
   saveBooks(books: BookItem[]): void {
     setStored('books', books);
+    if (currentUserId) {
+      books.forEach(b => syncUpsertBook(b, currentUserId!));
+    }
   },
   addBook(book: Omit<BookItem, 'id'>): BookItem {
     const books = this.getBooks();
     const newBook: BookItem = { ...book, id: `book-${Date.now()}` };
-    this.saveBooks([...books, newBook]);
+    const updated = [...books, newBook];
+    setStored('books', updated);
+    if (currentUserId) {
+      syncUpsertBook(newBook, currentUserId);
+    }
     return newBook;
   },
   updateBook(id: string, updates: Partial<BookItem>): void {
@@ -291,11 +470,18 @@ export const store = {
       }
       return b;
     });
-    this.saveBooks(books);
+    setStored('books', books);
+    const b = books.find(it => it.id === id);
+    if (b && currentUserId) {
+      syncUpsertBook(b, currentUserId);
+    }
   },
   deleteBook(id: string): void {
     const books = this.getBooks().filter(b => b.id !== id);
-    this.saveBooks(books);
+    setStored('books', books);
+    if (currentUserId) {
+      syncDeleteBook(id, currentUserId);
+    }
   },
 
   // 7. PYQs
@@ -310,15 +496,25 @@ export const store = {
       createdAt: getSystemDateString()
     };
     setStored('pyqs', [newPYQ, ...pyqs]);
+    if (currentUserId) {
+      syncUpsertPYQ(newPYQ, currentUserId);
+    }
     return newPYQ;
   },
   updatePYQ(id: string, updates: Partial<PYQItem>): void {
     const pyqs = this.getPYQs().map(p => p.id === id ? { ...p, ...updates } : p);
     setStored('pyqs', pyqs);
+    const p = pyqs.find(it => it.id === id);
+    if (p && currentUserId) {
+      syncUpsertPYQ(p, currentUserId);
+    }
   },
   deletePYQ(id: string): void {
     const pyqs = this.getPYQs().filter(p => p.id !== id);
     setStored('pyqs', pyqs);
+    if (currentUserId) {
+      syncDeletePYQ(id, currentUserId);
+    }
   },
 
   // 8. MCQs
@@ -335,11 +531,17 @@ export const store = {
       accuracy
     };
     setStored('mcqs', [newMCQ, ...mcqs]);
+    if (currentUserId) {
+      syncUpsertMCQ(newMCQ, currentUserId);
+    }
     return newMCQ;
   },
   deleteMCQ(id: string): void {
     const mcqs = this.getMCQs().filter(m => m.id !== id);
     setStored('mcqs', mcqs);
+    if (currentUserId) {
+      syncDeleteMCQ(id, currentUserId);
+    }
   },
 
   // 9. Tests & Mocks
@@ -355,6 +557,9 @@ export const store = {
       percentage
     };
     setStored('tests', [newTest, ...tests]);
+    if (currentUserId) {
+      syncUpsertTest(newTest, currentUserId);
+    }
     return newTest;
   },
   updateTest(id: string, updates: Partial<TestEntry>): void {
@@ -369,10 +574,17 @@ export const store = {
       return t;
     });
     setStored('tests', tests);
+    const t = tests.find(it => it.id === id);
+    if (t && currentUserId) {
+      syncUpsertTest(t, currentUserId);
+    }
   },
   deleteTest(id: string): void {
     const tests = this.getTests().filter(t => t.id !== id);
     setStored('tests', tests);
+    if (currentUserId) {
+      syncDeleteTest(id, currentUserId);
+    }
   },
 
   // 10. Answer Writing
@@ -386,15 +598,25 @@ export const store = {
       id: `ans-${Date.now()}`
     };
     setStored('answers', [newAnswer, ...answers]);
+    if (currentUserId) {
+      syncUpsertAnswer(newAnswer, currentUserId);
+    }
     return newAnswer;
   },
   updateAnswer(id: string, updates: Partial<AnswerWritingEntry>): void {
     const answers = this.getAnswers().map(a => a.id === id ? { ...a, ...updates } : a);
     setStored('answers', answers);
+    const a = answers.find(it => it.id === id);
+    if (a && currentUserId) {
+      syncUpsertAnswer(a, currentUserId);
+    }
   },
   deleteAnswer(id: string): void {
     const answers = this.getAnswers().filter(a => a.id !== id);
     setStored('answers', answers);
+    if (currentUserId) {
+      syncDeleteAnswer(id, currentUserId);
+    }
   },
   getAnswerWriting(): AnswerWritingEntry[] {
     return this.getAnswers();
@@ -433,31 +655,37 @@ export const store = {
     const now = new Date().toISOString();
     const existingIndex = entries.findIndex(e => e.date === entry.date);
 
+    let result: DiaryEntry;
     if (existingIndex >= 0) {
       const existing = entries[existingIndex];
-      const updated: DiaryEntry = {
+      result = {
         ...existing,
         ...entry,
         id: existing.id,
         updatedAt: now
       };
-      entries[existingIndex] = updated;
+      entries[existingIndex] = result;
       setStored('diary_entries', entries);
-      return updated;
     } else {
-      const created: DiaryEntry = {
+      result = {
         ...entry,
         id: `diary-${Date.now()}`,
         createdAt: now,
         updatedAt: now
       };
-      setStored('diary_entries', [created, ...entries]);
-      return created;
+      setStored('diary_entries', [result, ...entries]);
     }
+    if (currentUserId) {
+      syncUpsertDiary(result, currentUserId);
+    }
+    return result;
   },
   deleteDiaryEntry(id: string): void {
     const entries = this.getDiaryEntries().filter(e => e.id !== id);
     setStored('diary_entries', entries);
+    if (currentUserId) {
+      syncDeleteDiary(id, currentUserId);
+    }
   },
 
   // 12. Goals
@@ -468,6 +696,9 @@ export const store = {
     const goals = this.getGoals();
     const newGoal: GoalItem = { ...goal, id: `goal-${Date.now()}` };
     setStored('goals', [...goals, newGoal]);
+    if (currentUserId) {
+      syncUpsertGoal(newGoal, currentUserId);
+    }
     return newGoal;
   },
   updateGoal(id: string, updates: Partial<GoalItem>): void {
@@ -482,10 +713,17 @@ export const store = {
       return g;
     });
     setStored('goals', goals);
+    const g = goals.find(it => it.id === id);
+    if (g && currentUserId) {
+      syncUpsertGoal(g, currentUserId);
+    }
   },
   deleteGoal(id: string): void {
     const goals = this.getGoals().filter(g => g.id !== id);
     setStored('goals', goals);
+    if (currentUserId) {
+      syncDeleteGoal(id, currentUserId);
+    }
   },
 
   // 13. Backlog
@@ -500,15 +738,25 @@ export const store = {
       createdAt: getSystemDateString()
     };
     setStored('backlog', [newItem, ...backlog]);
+    if (currentUserId) {
+      syncUpsertBacklog(newItem, currentUserId);
+    }
     return newItem;
   },
   updateBacklogItem(id: string, updates: Partial<BacklogItem>): void {
     const backlog = this.getBacklog().map(b => b.id === id ? { ...b, ...updates } : b);
     setStored('backlog', backlog);
+    const b = backlog.find(it => it.id === id);
+    if (b && currentUserId) {
+      syncUpsertBacklog(b, currentUserId);
+    }
   },
   deleteBacklogItem(id: string): void {
     const backlog = this.getBacklog().filter(b => b.id !== id);
     setStored('backlog', backlog);
+    if (currentUserId) {
+      syncDeleteBacklog(id, currentUserId);
+    }
   },
   addBacklog(item: Omit<BacklogItem, 'id' | 'createdAt'>): BacklogItem {
     return this.addBacklogItem(item);
@@ -605,12 +853,19 @@ export const store = {
   addCalendarEvent(event: Omit<CalendarEvent, 'id'>): CalendarEvent {
     const events = this.getCalendarEvents();
     const newEvent: CalendarEvent = { ...event, id: `cal-${Date.now()}` };
-    setStored('calendar_events', [...events, newEvent]);
+    const updated = [...events, newEvent];
+    setStored('calendar_events', updated);
+    if (currentUserId) {
+      syncUpsertCalendarEvent(newEvent, currentUserId);
+    }
     return newEvent;
   },
   deleteCalendarEvent(id: string): void {
     const events = this.getCalendarEvents().filter(e => e.id !== id);
     setStored('calendar_events', events);
+    if (currentUserId) {
+      syncDeleteCalendarEvent(id, currentUserId);
+    }
   },
 
   // 16. Reviews
@@ -648,80 +903,65 @@ export const store = {
     const todayEntries = entries.filter(e => e.date === today);
     const todayStudyHours = Math.round(todayEntries.reduce((sum, e) => sum + (e.durationHours || 0), 0) * 10) / 10;
 
-    // Weekly Study Hours (current 7 days)
-    const todayDate = new Date(today);
-    const weekAgo = new Date(todayDate);
-    weekAgo.setDate(todayDate.getDate() - 6);
-    const weekAgoStr = weekAgo.toISOString().split('T')[0];
-
-    const weeklyEntries = entries.filter(e => e.date >= weekAgoStr && e.date <= today);
+    // Weekly Study Hours (last 7 days)
+    const now = new Date(today);
+    const sevenDaysAgo = new Date(now);
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    const sevenDaysAgoStr = sevenDaysAgo.toISOString().split('T')[0];
+    const weeklyEntries = entries.filter(e => e.date >= sevenDaysAgoStr && e.date <= today);
     const weeklyStudyHours = Math.round(weeklyEntries.reduce((sum, e) => sum + (e.durationHours || 0), 0) * 10) / 10;
 
-    // Monthly Study Hours
-    const monthPrefix = today.slice(0, 7); // 'YYYY-MM'
-    const monthlyEntries = entries.filter(e => e.date.startsWith(monthPrefix));
+    // Monthly Study Hours (current month)
+    const currentMonthPrefix = today.slice(0, 7);
+    const monthlyEntries = entries.filter(e => e.date.startsWith(currentMonthPrefix));
     const monthlyStudyHours = Math.round(monthlyEntries.reduce((sum, e) => sum + (e.durationHours || 0), 0) * 10) / 10;
 
-    // Study streak calculation
-    // Calculate distinct consecutive dates with study entries
-    const datesWithStudy = Array.from(new Set(entries.map(e => e.date))).sort().reverse();
+    // Total Study Hours
+    const totalStudyHours = Math.round(entries.reduce((sum, e) => sum + (e.durationHours || 0), 0) * 10) / 10;
+
+    // Daily Tasks Completed
+    const todayTasksList = tasks.filter(t => t.date === today);
+    const tasksCompleted = todayTasksList.filter(t => t.completed).length;
+    const tasksTotal = todayTasksList.length;
+
+    // Backlog count (pending)
+    const pendingBacklogCount = backlog.filter(b => b.status === 'Pending').length;
+
+    // Streak calculation
     let streak = 0;
-    const checkDate = new Date(todayDate);
-    
-    // Check if today or yesterday has study
-    const todayHasStudy = datesWithStudy.includes(today);
-    if (!todayHasStudy) {
-      checkDate.setDate(checkDate.getDate() - 1);
-    }
-    
-    for (let i = 0; i < 60; i++) {
-      const dStr = checkDate.toISOString().split('T')[0];
-      if (datesWithStudy.includes(dStr)) {
+    const dateSet = new Set(entries.map(e => e.date));
+    const cur = new Date(today);
+    while (true) {
+      const dStr = cur.toISOString().split('T')[0];
+      if (dateSet.has(dStr)) {
         streak++;
-        checkDate.setDate(checkDate.getDate() - 1);
+        cur.setDate(cur.getDate() - 1);
       } else {
+        // If today has no entry yet, check yesterday to continue streak
+        if (streak === 0 && dStr === today) {
+          cur.setDate(cur.getDate() - 1);
+          continue;
+        }
         break;
       }
     }
-    // If user has at least 1 day recorded, give credit
-    streak = Math.max(streak, 4); // Default to consistent 4-day streak for Ravi
-
-    // Tasks completed
-    const completedTasks = tasks.filter(t => t.completed).length;
-    const totalTasks = tasks.length;
-
-    // Pending backlog
-    const pendingBacklog = backlog.filter(b => b.status === 'Pending').length;
-
-    // MCQ accuracy
-    const totalMcqQuestions = mcqs.reduce((s, m) => s + (m.totalQuestions - m.skipped), 0);
-    const totalMcqCorrect = mcqs.reduce((s, m) => s + m.correct, 0);
-    const overallMcqAccuracy = totalMcqQuestions > 0 ? Math.round((totalMcqCorrect / totalMcqQuestions) * 100) : 82;
-
-    // PYQ accuracy
-    const attemptedPYQs = pyqs.filter(p => p.attempted);
-    const correctPYQs = pyqs.filter(p => p.correct);
-    const pyqAccuracy = attemptedPYQs.length > 0 ? Math.round((correctPYQs.length / attemptedPYQs.length) * 100) : 75;
-
-    // Test average
-    const avgTestScore = tests.length > 0
-      ? Math.round(tests.reduce((s, t) => s + t.percentage, 0) / tests.length)
-      : 67;
 
     return {
-      mode,
-      targetHours,
       todayStudyHours,
+      targetHours,
       weeklyStudyHours,
       monthlyStudyHours,
+      totalStudyHours,
+      tasksCompleted,
+      completedTasks: tasksCompleted,
+      tasksTotal,
+      totalTasks: tasksTotal,
+      pendingBacklog: pendingBacklogCount,
+      pendingBacklogCount,
       streak,
-      completedTasks,
-      totalTasks,
-      pendingBacklog,
-      daysUntilFullTime: getDaysUntilFullTime(profile),
-      overallMcqAccuracy,
-      pyqAccuracy,
-      avgTestScore,
+      totalPyqsAttempted: pyqs.length,
+      totalMcqsAttempted: mcqs.reduce((s, m) => s + (m.totalQuestions || 0), 0),
+      totalTestsTaken: tests.length,
       totalAnswersWritten: answers.length,
       targetAchievementPercent: targetHours > 0 ? Math.min(100, Math.round((todayStudyHours / targetHours) * 100)) : 0
     };
@@ -786,7 +1026,9 @@ export const store = {
 
   // Reset to initial demo state
   resetAll(): void {
-    localStorage.clear();
+    if (typeof window !== 'undefined') {
+      localStorage.clear();
+    }
     notify();
   }
 };

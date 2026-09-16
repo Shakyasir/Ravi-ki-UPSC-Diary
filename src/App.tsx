@@ -1,9 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { store } from './lib/storage';
+import { getSupabase } from './lib/supabaseClient';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
 import { GlobalSearchModal } from './components/GlobalSearchModal';
 import { AuthModal } from './components/AuthModal';
+import { LoginView } from './views/LoginView';
+import { RaviAvatar } from './components/RaviAvatar';
 
 // Views
 import { DashboardView } from './views/DashboardView';
@@ -30,11 +33,15 @@ import {
   CheckSquare, 
   Clock, 
   BookMarked, 
-  Menu,
-  X
+  Menu, 
+  X,
+  RefreshCw,
+  Sparkles
 } from 'lucide-react';
 
 export default function App() {
+  const [currentUser, setCurrentUser] = useState<any>(null);
+  const [authLoading, setAuthLoading] = useState<boolean>(true);
   const [activeTab, setActiveTab] = useState<string>('dashboard');
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState<boolean>(false);
@@ -48,6 +55,46 @@ export default function App() {
       setTick(t => t + 1);
     });
     return () => unsubscribe();
+  }, []);
+
+  // Check Supabase session & listen for auth changes
+  useEffect(() => {
+    const supabase = getSupabase();
+    if (!supabase) {
+      setAuthLoading(false);
+      return;
+    }
+
+    // 1. Initial Session Check
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user) {
+        setCurrentUser(session.user);
+        store.setCurrentUser(session.user.id);
+      } else {
+        setCurrentUser(null);
+        store.setCurrentUser(null);
+      }
+      setAuthLoading(false);
+    }).catch((err) => {
+      console.warn('Supabase session retrieval warning:', err);
+      setAuthLoading(false);
+    });
+
+    // 2. Real-time Auth State Subscription
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session?.user) {
+        setCurrentUser(session.user);
+        store.setCurrentUser(session.user.id);
+      } else {
+        setCurrentUser(null);
+        store.setCurrentUser(null);
+      }
+      setAuthLoading(false);
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
   }, []);
 
   // Global keyboard shortcut: Cmd+K / Ctrl+K
@@ -68,6 +115,49 @@ export default function App() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
+  const handleLogout = async () => {
+    const supabase = getSupabase();
+    if (supabase) {
+      await supabase.auth.signOut();
+    }
+    setCurrentUser(null);
+    store.setCurrentUser(null);
+  };
+
+  // Auth Loading Screen
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-4 font-['Plus_Jakarta_Sans'] text-white">
+        <div className="flex flex-col items-center gap-4 animate-in fade-in duration-300">
+          <div className="p-1 rounded-full ring-4 ring-indigo-500/30 bg-slate-900 shadow-2xl">
+            <RaviAvatar size="lg" showBadge />
+          </div>
+          <div className="text-center">
+            <h2 className="text-xl font-black tracking-tight text-white">Ravi Ki UPSC Diary</h2>
+            <p className="text-xs font-semibold text-indigo-400 mt-0.5">IAS RAVI • LBSNAA Mission 2029</p>
+          </div>
+          <div className="flex items-center gap-2 text-xs text-slate-400 mt-2 bg-slate-900/80 border border-slate-800 px-3.5 py-1.5 rounded-full">
+            <RefreshCw className="w-3.5 h-3.5 animate-spin text-indigo-400" />
+            <span>Verifying secure Supabase session...</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Not Logged In: Show Login View
+  if (!currentUser) {
+    return (
+      <LoginView
+        onLoginSuccess={(user) => {
+          setCurrentUser(user);
+          store.setCurrentUser(user.id);
+        }}
+      />
+    );
+  }
+
+  // Authenticated: Render Main App
   return (
     <div className="min-h-screen bg-[#F8FAFC] text-slate-900 flex font-['Plus_Jakarta_Sans'] antialiased selection:bg-indigo-500 selection:text-white">
       {/* Desktop & Tablet Sidebar */}
@@ -92,7 +182,7 @@ export default function App() {
               <span className="font-bold text-white text-sm">Ravi Ki UPSC Diary</span>
               <button 
                 onClick={() => setMobileMenuOpen(false)}
-                className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800"
+                className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -113,6 +203,8 @@ export default function App() {
       <div className="flex-1 flex flex-col min-w-0 pb-16 md:pb-0">
         {/* Top Header */}
         <Header
+          currentUser={currentUser}
+          onLogout={handleLogout}
           onOpenSearch={() => setSearchModalOpen(true)}
           onOpenAuth={() => setAuthModalOpen(true)}
           onNavigate={handleNavigate}
@@ -144,7 +236,7 @@ export default function App() {
       <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200/80 px-2 py-1.5 flex items-center justify-around">
         <button
           onClick={() => handleNavigate('dashboard')}
-          className={`flex flex-col items-center gap-0.5 py-1 px-2 rounded-xl text-[10px] font-bold ${
+          className={`flex flex-col items-center gap-0.5 py-1 px-2 rounded-xl text-[10px] font-bold cursor-pointer ${
             activeTab === 'dashboard' ? 'text-indigo-600' : 'text-slate-500 hover:text-slate-900'
           }`}
         >
@@ -154,7 +246,7 @@ export default function App() {
 
         <button
           onClick={() => handleNavigate('mission')}
-          className={`flex flex-col items-center gap-0.5 py-1 px-2 rounded-xl text-[10px] font-bold ${
+          className={`flex flex-col items-center gap-0.5 py-1 px-2 rounded-xl text-[10px] font-bold cursor-pointer ${
             activeTab === 'mission' ? 'text-indigo-600' : 'text-slate-500 hover:text-slate-900'
           }`}
         >
@@ -164,7 +256,7 @@ export default function App() {
 
         <button
           onClick={() => handleNavigate('schedule')}
-          className={`flex flex-col items-center gap-0.5 py-1 px-2 rounded-xl text-[10px] font-bold ${
+          className={`flex flex-col items-center gap-0.5 py-1 px-2 rounded-xl text-[10px] font-bold cursor-pointer ${
             activeTab === 'schedule' ? 'text-indigo-600' : 'text-slate-500 hover:text-slate-900'
           }`}
         >
@@ -174,7 +266,7 @@ export default function App() {
 
         <button
           onClick={() => handleNavigate('diary')}
-          className={`flex flex-col items-center gap-0.5 py-1 px-2 rounded-xl text-[10px] font-bold ${
+          className={`flex flex-col items-center gap-0.5 py-1 px-2 rounded-xl text-[10px] font-bold cursor-pointer ${
             activeTab === 'diary' ? 'text-indigo-600' : 'text-slate-500 hover:text-slate-900'
           }`}
         >
@@ -184,7 +276,7 @@ export default function App() {
 
         <button
           onClick={() => setMobileMenuOpen(true)}
-          className="flex flex-col items-center gap-0.5 py-1 px-2 rounded-xl text-[10px] font-bold text-slate-500 hover:text-slate-900"
+          className="flex flex-col items-center gap-0.5 py-1 px-2 rounded-xl text-[10px] font-bold text-slate-500 hover:text-slate-900 cursor-pointer"
         >
           <Menu className="w-4 h-4" />
           <span>More</span>
