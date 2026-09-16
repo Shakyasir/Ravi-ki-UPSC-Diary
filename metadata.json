@@ -1,0 +1,6 @@
+{
+  "name": "Ravi Ki UPSC Diary",
+  "description": "Private personal UPSC 2029 preparation command center, study register, timetable, analytics, and personal diary for IAS Ravi.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
