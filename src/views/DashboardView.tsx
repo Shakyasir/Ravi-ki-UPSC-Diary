@@ -520,8 +520,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
           </div>
 
           <div className="space-y-2.5">
-            {(studyEntries || []).map((e) => (
-              <div key={e.id} className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200/80 hover:bg-slate-100/80 transition-colors">
+            {(studyEntries || []).map((e, idx) => (
+              <div key={`${e.id || 'entry'}-${idx}`} className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200/80 hover:bg-slate-100/80 transition-colors">
                 <div className="flex items-center justify-between">
                   <span className="text-[10px] font-bold text-indigo-700 uppercase bg-indigo-50 px-2 py-0.5 rounded">
                     {e.subject}

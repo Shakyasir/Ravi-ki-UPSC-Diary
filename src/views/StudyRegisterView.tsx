@@ -394,8 +394,8 @@ export const StudyRegisterView: React.FC = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 text-xs">
-              {(filteredEntries || []).map((e) => (
-                <tr key={e.id} className="hover:bg-slate-50/70 transition-colors">
+              {(filteredEntries || []).map((e, idx) => (
+                <tr key={`${e.id || 'entry'}-${idx}`} className="hover:bg-slate-50/70 transition-colors">
                   <td className="py-3.5 px-4 font-mono text-slate-600 font-medium whitespace-nowrap">
                     {e.date}
                   </td>

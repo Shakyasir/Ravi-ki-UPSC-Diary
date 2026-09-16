@@ -86,6 +86,49 @@ export function subscribeToStore(listener: Listener) {
 // Current active Supabase authenticated user ID
 let currentUserId: string | null = null;
 
+// Unique ID generator with timestamp and high-entropy random suffix
+export function generateUniqueId(prefix: string): string {
+  const rand = Math.random().toString(36).substring(2, 9);
+  return `${prefix}-${Date.now()}-${rand}`;
+}
+
+// Automatically detect and fix duplicate IDs in arrays stored in localStorage
+function deduplicateEntities<T>(items: T, key: string): T {
+  if (!Array.isArray(items) || items.length <= 1) return items;
+  const first = items[0];
+  if (!first || typeof first !== 'object' || typeof (first as any).id !== 'string') {
+    return items;
+  }
+
+  const seen = new Set<string>();
+  let hasDuplicate = false;
+  const result: any[] = [];
+
+  for (const item of items) {
+    if (!item) continue;
+    const itemId = (item as any).id;
+    if (!itemId || seen.has(itemId)) {
+      hasDuplicate = true;
+      const newId = `${itemId || 'item'}-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+      result.push({ ...item, id: newId });
+      seen.add(newId);
+    } else {
+      seen.add(itemId);
+      result.push(item);
+    }
+  }
+
+  if (hasDuplicate && typeof window !== 'undefined') {
+    try {
+      localStorage.setItem(`ravi_upsc_${key}`, JSON.stringify(result));
+    } catch {
+      // ignore
+    }
+  }
+
+  return result as T;
+}
+
 // Helper to get / set typed localStorage
 function getStored<T>(key: string, defaultValue: T): T {
   try {
@@ -94,7 +137,7 @@ function getStored<T>(key: string, defaultValue: T): T {
     const parsed = JSON.parse(raw);
     if (parsed === null || parsed === undefined) return defaultValue;
     if (Array.isArray(defaultValue) && !Array.isArray(parsed)) return defaultValue;
-    return parsed as T;
+    return deduplicateEntities(parsed, key) as T;
   } catch (err) {
     console.warn(`Error reading key ravi_upsc_${key}:`, err);
     return defaultValue;
@@ -264,7 +307,7 @@ export const store = {
   },
   addScheduleItem(item: Omit<ScheduleItem, 'id'>): ScheduleItem {
     const items = this.getSchedule();
-    const newItem: ScheduleItem = { ...item, id: `sched-${Date.now()}` };
+    const newItem: ScheduleItem = { ...item, id: generateUniqueId('sched') };
     const updated = [...items, newItem];
     setStored('schedule', updated);
     if (currentUserId) {
@@ -326,7 +369,7 @@ export const store = {
     const tasks = this.getTodayTasks();
     const newTask: TodayTask = {
       ...task,
-      id: `task-${Date.now()}`,
+      id: generateUniqueId('task'),
       order: tasks.length + 1
     };
     const updated = [...tasks, newTask];
@@ -352,7 +395,7 @@ export const store = {
     const entries = this.getStudyEntries();
     const newEntry: StudyEntry = {
       ...entry,
-      id: `study-${Date.now()}`,
+      id: generateUniqueId('study'),
       createdAt: new Date().toISOString()
     };
     const updated = [newEntry, ...entries];
@@ -393,7 +436,7 @@ export const store = {
   },
   addSubject(subject: Omit<SubjectItem, 'id'>): SubjectItem {
     const subjects = this.getSubjects();
-    const newSubject: SubjectItem = { ...subject, id: `sub-${Date.now()}` };
+    const newSubject: SubjectItem = { ...subject, id: generateUniqueId('sub') };
     const updated = [...subjects, newSubject];
     setStored('subjects', updated);
     if (currentUserId) {
@@ -451,7 +494,7 @@ export const store = {
   },
   addBook(book: Omit<BookItem, 'id'>): BookItem {
     const books = this.getBooks();
-    const newBook: BookItem = { ...book, id: `book-${Date.now()}` };
+    const newBook: BookItem = { ...book, id: generateUniqueId('book') };
     const updated = [...books, newBook];
     setStored('books', updated);
     if (currentUserId) {
@@ -492,7 +535,7 @@ export const store = {
     const pyqs = this.getPYQs();
     const newPYQ: PYQItem = {
       ...pyq,
-      id: `pyq-${Date.now()}`,
+      id: generateUniqueId('pyq'),
       createdAt: getSystemDateString()
     };
     setStored('pyqs', [newPYQ, ...pyqs]);
@@ -527,7 +570,7 @@ export const store = {
     const accuracy = attempted > 0 ? Math.round((entry.correct / attempted) * 1000) / 10 : 0;
     const newMCQ: MCQEntry = {
       ...entry,
-      id: `mcq-${Date.now()}`,
+      id: generateUniqueId('mcq'),
       accuracy
     };
     setStored('mcqs', [newMCQ, ...mcqs]);
@@ -553,7 +596,7 @@ export const store = {
     const percentage = entry.maxScore > 0 ? Math.round((entry.score / entry.maxScore) * 1000) / 10 : 0;
     const newTest: TestEntry = {
       ...entry,
-      id: `test-${Date.now()}`,
+      id: generateUniqueId('test'),
       percentage
     };
     setStored('tests', [newTest, ...tests]);
@@ -595,7 +638,7 @@ export const store = {
     const answers = this.getAnswers();
     const newAnswer: AnswerWritingEntry = {
       ...entry,
-      id: `ans-${Date.now()}`
+      id: generateUniqueId('ans')
     };
     setStored('answers', [newAnswer, ...answers]);
     if (currentUserId) {
@@ -669,7 +712,7 @@ export const store = {
     } else {
       result = {
         ...entry,
-        id: `diary-${Date.now()}`,
+        id: generateUniqueId('diary'),
         createdAt: now,
         updatedAt: now
       };
@@ -694,7 +737,7 @@ export const store = {
   },
   addGoal(goal: Omit<GoalItem, 'id'>): GoalItem {
     const goals = this.getGoals();
-    const newGoal: GoalItem = { ...goal, id: `goal-${Date.now()}` };
+    const newGoal: GoalItem = { ...goal, id: generateUniqueId('goal') };
     setStored('goals', [...goals, newGoal]);
     if (currentUserId) {
       syncUpsertGoal(newGoal, currentUserId);
@@ -734,7 +777,7 @@ export const store = {
     const backlog = this.getBacklog();
     const newItem: BacklogItem = {
       ...item,
-      id: `backlog-${Date.now()}`,
+      id: generateUniqueId('backlog'),
       createdAt: getSystemDateString()
     };
     setStored('backlog', [newItem, ...backlog]);
@@ -852,7 +895,7 @@ export const store = {
   },
   addCalendarEvent(event: Omit<CalendarEvent, 'id'>): CalendarEvent {
     const events = this.getCalendarEvents();
-    const newEvent: CalendarEvent = { ...event, id: `cal-${Date.now()}` };
+    const newEvent: CalendarEvent = { ...event, id: generateUniqueId('cal') };
     const updated = [...events, newEvent];
     setStored('calendar_events', updated);
     if (currentUserId) {
@@ -876,7 +919,7 @@ export const store = {
     const reviews = this.getDailyReviews();
     const newRev: DailyReview = {
       ...review,
-      id: `drev-${Date.now()}`,
+      id: generateUniqueId('drev'),
       submittedAt: new Date().toISOString()
     };
     setStored('daily_reviews', [newRev, ...reviews.filter(r => r.date !== review.date)]);

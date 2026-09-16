@@ -224,8 +224,8 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onNavigate }) => {
                   No study sessions recorded for this date.
                 </div>
               ) : (
-                (selectedDayEntries || []).map((e) => (
-                  <div key={e.id} className="p-3 rounded-2xl bg-slate-50 border border-slate-200/80">
+                (selectedDayEntries || []).map((e, idx) => (
+                  <div key={`${e.id || 'entry'}-${idx}`} className="p-3 rounded-2xl bg-slate-50 border border-slate-200/80">
                     <div className="flex items-center justify-between">
                       <span className="text-[10px] font-bold text-indigo-700 uppercase">{e.subject}</span>
                       <span className="text-xs font-extrabold text-slate-900 font-mono">{e.durationHours}h</span>
