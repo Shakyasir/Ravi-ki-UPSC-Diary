@@ -69,6 +69,11 @@ export interface TodayTask {
   completed: boolean;
   order: number;
   notes?: string;
+  subject?: string;
+  priority?: 'High' | 'Medium' | 'Low';
+  startTime?: string;
+  endTime?: string;
+  description?: string;
 }
 
 export interface StudyEntry {
@@ -273,6 +278,7 @@ export interface BacklogItem {
   status?: 'Pending' | 'In Progress' | 'Resolved';
   notes?: string;
   createdAt?: string;
+  originalTaskId?: string;
 }
 
 export interface CalendarEvent {

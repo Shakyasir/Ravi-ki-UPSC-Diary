@@ -155,13 +155,35 @@ function setStored<T>(key: string, value: T): void {
   }
 }
 
-// Current date formatted as YYYY-MM-DD (UPSC 2026 reference default: 2026-09-16)
+// Current date formatted as YYYY-MM-DD (Uses India timezone Asia/Kolkata)
 export function getSystemDateString(): string {
-  const d = new Date();
-  const y = d.getFullYear() >= 2026 ? d.getFullYear() : 2026;
+  try {
+    const formatter = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Kolkata',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    });
+    return formatter.format(new Date());
+  } catch (e) {
+    const d = new Date();
+    const y = d.getFullYear() >= 2026 ? d.getFullYear() : 2026;
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  }
+}
+
+// Tomorrow's date formatted as YYYY-MM-DD (calculated as Today + 1 calendar day)
+export function getTomorrowDateString(baseDate?: string): string {
+  const dateStr = baseDate || getSystemDateString();
+  const [year, month, day] = dateStr.split('-').map(Number);
+  const d = new Date(year, month - 1, day);
+  d.setDate(d.getDate() + 1);
+  const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
+  const dt = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${dt}`;
 }
 
 // Determine preparation mode based on date or manual override
@@ -226,7 +248,7 @@ export const store = {
           const localPayload = {
             profile: this.getProfile(),
             schedule: this.getSchedule(),
-            todayTasks: this.getTodayTasks(),
+            todayTasks: this.getAllTasks(),
             studyEntries: this.getStudyEntries(),
             subjects: this.getSubjects(),
             books: this.getBooks(),
@@ -338,8 +360,16 @@ export const store = {
   },
 
   // 3. Today Tasks / Mission
-  getTodayTasks(): TodayTask[] {
+  getAllTasks(): TodayTask[] {
     return getStored<TodayTask[]>('today_tasks', DEFAULT_TODAY_TASKS);
+  },
+  getTodayTasks(date?: string): TodayTask[] {
+    this.performDateRollover();
+    const targetDate = date || getSystemDateString();
+    const all = this.getAllTasks();
+    return all
+      .filter(t => t.date === targetDate)
+      .sort((a, b) => (a.order || 0) - (b.order || 0));
   },
   saveTodayTasks(tasks: TodayTask[]): void {
     setStored('today_tasks', tasks);
@@ -347,11 +377,26 @@ export const store = {
       tasks.forEach(t => syncUpsertTask(t, currentUserId!));
     }
   },
+  updateTodayTask(id: string, updates: Partial<TodayTask>): void {
+    const all = this.getAllTasks();
+    let updatedTask: TodayTask | null = null;
+    const updated = all.map(t => {
+      if (t.id === id) {
+        updatedTask = { ...t, ...updates };
+        return updatedTask;
+      }
+      return t;
+    });
+    setStored('today_tasks', updated);
+    if (updatedTask && currentUserId) {
+      syncUpsertTask(updatedTask, currentUserId);
+    }
+  },
   toggleTask(id: string): boolean {
-    const tasks = this.getTodayTasks();
+    const all = this.getAllTasks();
     let isCompleted = false;
     let modifiedTask: TodayTask | null = null;
-    const updated = tasks.map(t => {
+    const updated = all.map(t => {
       if (t.id === id) {
         isCompleted = !t.completed;
         modifiedTask = { ...t, completed: isCompleted };
@@ -366,13 +411,16 @@ export const store = {
     return isCompleted;
   },
   addTodayTask(task: Omit<TodayTask, 'id' | 'order'>): TodayTask {
-    const tasks = this.getTodayTasks();
+    const today = task.date || getSystemDateString();
+    const todayTasks = this.getAllTasks().filter(t => t.date === today);
     const newTask: TodayTask = {
       ...task,
+      date: today,
       id: generateUniqueId('task'),
-      order: tasks.length + 1
+      order: todayTasks.length + 1
     };
-    const updated = [...tasks, newTask];
+    const all = this.getAllTasks();
+    const updated = [...all, newTask];
     setStored('today_tasks', updated);
     if (currentUserId) {
       syncUpsertTask(newTask, currentUserId);
@@ -380,10 +428,56 @@ export const store = {
     return newTask;
   },
   deleteTodayTask(id: string): void {
-    const tasks = this.getTodayTasks().filter(t => t.id !== id);
-    setStored('today_tasks', tasks);
+    const all = this.getAllTasks().filter(t => t.id !== id);
+    setStored('today_tasks', all);
     if (currentUserId) {
       syncDeleteTask(id, currentUserId);
+    }
+  },
+
+  // Automatic Date Rollover to Backlog (Idempotent)
+  performDateRollover(): void {
+    const today = getSystemDateString();
+    const allTasks = this.getAllTasks();
+    const currentBacklog = getStored<BacklogItem[]>('backlog', DEFAULT_BACKLOG);
+    let backlogChanged = false;
+    const updatedBacklog = [...currentBacklog];
+
+    // Find incomplete tasks from previous dates (date < today and not completed)
+    const overdueTasks = allTasks.filter(t => t.date && t.date < today && !t.completed);
+
+    for (const task of overdueTasks) {
+      const expectedId = `backlog-task-${task.id}`;
+      const exists = updatedBacklog.some(
+        b => b.id === expectedId || b.originalTaskId === task.id || (b.task === task.title && b.missedDate === task.date)
+      );
+
+      if (!exists) {
+        const newBacklogItem: BacklogItem = {
+          id: expectedId,
+          originalTaskId: task.id,
+          task: task.title,
+          topic: task.title,
+          subject: task.subject || (task.category === 'PW Class' ? 'PhysicsWallah UPSC Batch' : task.category === 'Current Affairs' ? 'Current Affairs & Editorials' : 'Indian Polity & GS'),
+          category: 'Pending Topic',
+          priority: task.priority || 'High',
+          missedDate: task.date,
+          plannedDate: today,
+          cleared: false,
+          status: 'Pending',
+          notes: task.notes ? `Missed from ${task.date}. ${task.notes}` : `Missed from ${task.date}`,
+          createdAt: task.date
+        };
+        updatedBacklog.unshift(newBacklogItem);
+        backlogChanged = true;
+        if (currentUserId) {
+          syncUpsertBacklog(newBacklogItem, currentUserId);
+        }
+      }
+    }
+
+    if (backlogChanged) {
+      setStored('backlog', updatedBacklog);
     }
   },
 
@@ -805,10 +899,59 @@ export const store = {
     return this.addBacklogItem(item);
   },
   deleteBacklog(id: string): void {
+    const item = this.getBacklog().find(b => b.id === id);
+    if (item?.originalTaskId) {
+      this.deleteTodayTask(item.originalTaskId);
+    }
     this.deleteBacklogItem(id);
   },
   clearBacklog(id: string): void {
+    const item = this.getBacklog().find(b => b.id === id);
+    if (item?.originalTaskId) {
+      this.updateTodayTask(item.originalTaskId, { completed: true });
+    }
     this.updateBacklogItem(id, { cleared: true, status: 'Resolved' });
+  },
+  moveBacklogToToday(backlogId: string): void {
+    const today = getSystemDateString();
+    const item = this.getBacklog().find(b => b.id === backlogId);
+    if (!item) return;
+
+    if (item.originalTaskId) {
+      this.updateTodayTask(item.originalTaskId, {
+        date: today,
+        completed: false
+      });
+    } else {
+      this.addTodayTask({
+        date: today,
+        title: item.topic || item.task || 'Backlog Task',
+        durationHours: 1.5,
+        category: 'GS',
+        completed: false,
+        notes: item.notes || item.reason,
+        priority: item.priority
+      });
+    }
+
+    this.deleteBacklogItem(backlogId);
+  },
+  rescheduleBacklog(backlogId: string, newDate: string): void {
+    const item = this.getBacklog().find(b => b.id === backlogId);
+    if (!item) return;
+
+    if (item.originalTaskId) {
+      this.updateTodayTask(item.originalTaskId, {
+        date: newDate
+      });
+    }
+
+    const today = getSystemDateString();
+    if (newDate >= today) {
+      this.deleteBacklogItem(backlogId);
+    } else {
+      this.updateBacklogItem(backlogId, { plannedDate: newDate });
+    }
   },
 
   // 14. Roadmap
@@ -1017,7 +1160,7 @@ export const store = {
       exportedAt: new Date().toISOString(),
       profile: this.getProfile(),
       schedule: this.getSchedule(),
-      todayTasks: this.getTodayTasks(),
+      todayTasks: this.getAllTasks(),
       studyEntries: this.getStudyEntries(),
       subjects: this.getSubjects(),
       books: this.getBooks(),

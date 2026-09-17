@@ -277,7 +277,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
 
           {/* Task Checklist Items */}
           <div className="space-y-2.5 flex-1 overflow-y-auto max-h-96">
-            {(todayTasks || []).map((task) => (
+            {(todayTasks || []).length === 0 ? (
+              <div className="p-6 text-center text-xs text-slate-400 bg-slate-50 rounded-2xl border border-dashed border-slate-200">
+                No mission tasks recorded for today yet. Click &quot;Add Task&quot; to begin.
+              </div>
+            ) : (
+              (todayTasks || []).map((task) => (
               <div
                 key={task.id}
                 onClick={() => handleToggleTask(task.id)}
@@ -317,7 +322,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
                   </span>
                 </div>
               </div>
-            ))}
+            ))
+          )}
           </div>
 
           <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
