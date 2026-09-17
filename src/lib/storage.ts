@@ -186,6 +186,48 @@ export function getTomorrowDateString(baseDate?: string): string {
   return `${y}-${m}-${dt}`;
 }
 
+export interface ConsistencyDatePoint {
+  dateStr: string;   // YYYY-MM-DD
+  day: string;       // "Thu"
+  date: string;      // "17 Sep"
+  isToday: boolean;
+}
+
+// Generate an array of consecutive calendar dates ending today in Asia/Kolkata
+export function getConsistencyDateRange(daysCount: number, baseDateStr?: string): ConsistencyDatePoint[] {
+  const todayStr = baseDateStr || getSystemDateString();
+  const [year, month, day] = todayStr.split('-').map(Number);
+  const result: ConsistencyDatePoint[] = [];
+
+  for (let offset = daysCount - 1; offset >= 0; offset--) {
+    // Construct UTC noon date so daylight saving or timezone shifts don't affect day step
+    const dt = new Date(Date.UTC(year, month - 1, day - offset, 12, 0, 0));
+    const y = dt.getUTCFullYear();
+    const m = String(dt.getUTCMonth() + 1).padStart(2, '0');
+    const dNum = dt.getUTCDate();
+    const dtStr = `${y}-${m}-${String(dNum).padStart(2, '0')}`;
+
+    const dayName = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Asia/Kolkata',
+      weekday: 'short'
+    }).format(dt);
+
+    const monthName = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Asia/Kolkata',
+      month: 'short'
+    }).format(dt);
+
+    result.push({
+      dateStr: dtStr,
+      day: dayName,
+      date: `${dNum} ${monthName}`,
+      isToday: dtStr === todayStr
+    });
+  }
+
+  return result;
+}
+
 // Determine preparation mode based on date or manual override
 export function getEffectiveMode(profile: UserProfile): PreparationMode {
   if (profile.manualModeOverride && profile.manualModeOverride !== 'AUTO') {
@@ -516,6 +558,25 @@ export const store = {
     if (currentUserId) {
       syncDeleteStudyEntry(id, currentUserId);
     }
+  },
+  getDailyStudyHours(dateStr: string): number {
+    const entries = this.getStudyEntries().filter(e => e.date === dateStr);
+    const completedTasks = this.getAllTasks().filter(t => t.date === dateStr && t.completed);
+
+    // Sum hours from study register entries
+    let total = entries.reduce((sum, e) => sum + (Number(e.durationHours) || 0), 0);
+
+    // Add completed tasks that are not already present in study register (avoid double counting)
+    for (const task of completedTasks) {
+      const isAlreadyLogged = entries.some(
+        e => e.topic.trim().toLowerCase() === task.title.trim().toLowerCase()
+      );
+      if (!isAlreadyLogged) {
+        total += Number(task.durationHours) || 0;
+      }
+    }
+
+    return Math.round(total * 10) / 10;
   },
 
   // 5. Subjects
@@ -1086,16 +1147,11 @@ export const store = {
     const targetHours = mode === 'FULL-TIME UPSC' ? profile.dailyTargetFullTimeHours : profile.dailyTargetJobHours;
 
     // Today's Study Hours
-    const todayEntries = entries.filter(e => e.date === today);
-    const todayStudyHours = Math.round(todayEntries.reduce((sum, e) => sum + (e.durationHours || 0), 0) * 10) / 10;
+    const todayStudyHours = this.getDailyStudyHours(today);
 
-    // Weekly Study Hours (last 7 days)
-    const now = new Date(today);
-    const sevenDaysAgo = new Date(now);
-    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-    const sevenDaysAgoStr = sevenDaysAgo.toISOString().split('T')[0];
-    const weeklyEntries = entries.filter(e => e.date >= sevenDaysAgoStr && e.date <= today);
-    const weeklyStudyHours = Math.round(weeklyEntries.reduce((sum, e) => sum + (e.durationHours || 0), 0) * 10) / 10;
+    // Weekly Study Hours (last 7 days ending today)
+    const last7Days = getConsistencyDateRange(7);
+    const weeklyStudyHours = Math.round(last7Days.reduce((sum, d) => sum + this.getDailyStudyHours(d.dateStr), 0) * 10) / 10;
 
     // Monthly Study Hours (current month)
     const currentMonthPrefix = today.slice(0, 7);

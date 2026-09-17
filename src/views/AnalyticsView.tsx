@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   BarChart3,
   TrendingUp,
@@ -10,30 +10,66 @@ import {
   Sparkles,
   Rocket
 } from 'lucide-react';
-import { store, getDaysUntilFullTime, getProfile } from '../lib/storage';
+import { 
+  store, 
+  getDaysUntilFullTime, 
+  getProfile, 
+  getConsistencyDateRange,
+  getEffectiveMode
+} from '../lib/storage';
 
 export const AnalyticsView: React.FC = () => {
+  const [tick, setTick] = useState(0);
+
+  useEffect(() => {
+    // Re-render when store updates (new study entry, completed task, sync, etc.)
+    const unsub = store.subscribe(() => {
+      setTick(t => t + 1);
+    });
+
+    // Check periodically for India midnight date rollover
+    const interval = setInterval(() => {
+      setTick(t => t + 1);
+    }, 30000);
+
+    return () => {
+      unsub();
+      clearInterval(interval);
+    };
+  }, []);
+
   const profile = store.getProfile();
   const metrics = store.getMetrics();
   const studyEntries = store.getStudyEntries() || [];
   const subjects = store.getSubjects() || [];
   const mcqs = store.getMCQs() || [];
   const daysUntilFullTime = getDaysUntilFullTime(profile);
+  const mode = getEffectiveMode(profile);
 
   const [timeRange, setTimeRange] = useState<'7' | '14' | '30'>('7');
 
-  // Daily study hours simulation for the last 7 days ending 2026-09-16
-  const past7DaysData = [
-    { day: 'Thu', date: '10 Sep', hours: 5.5, target: 5.5 },
-    { day: 'Fri', date: '11 Sep', hours: 6.0, target: 5.5 },
-    { day: 'Sat', date: '12 Sep', hours: 7.0, target: 5.5 },
-    { day: 'Sun', date: '13 Sep', hours: 8.0, target: 5.5 },
-    { day: 'Mon', date: '14 Sep', hours: 5.5, target: 5.5 },
-    { day: 'Tue', date: '15 Sep', hours: 5.5, target: 5.5 },
-    { day: 'Wed', date: '16 Sep', hours: metrics.todayStudyHours || 5.5, target: 5.5 },
-  ];
+  // Dynamic calculation for Daily Study Consistency based on India Standard Time (Asia/Kolkata)
+  const daysCount = Number(timeRange) || 7;
+  const targetHours = mode === 'FULL-TIME UPSC' ? profile.dailyTargetFullTimeHours : (profile.dailyTargetJobHours || 5.5);
+  const datePoints = getConsistencyDateRange(daysCount);
 
-  const maxDailyHour = 10;
+  const chartData = datePoints.map(point => {
+    const hours = store.getDailyStudyHours(point.dateStr);
+    return {
+      day: point.day,
+      date: point.date,
+      dateStr: point.dateStr,
+      hours,
+      target: targetHours,
+      isToday: point.isToday
+    };
+  });
+
+  const maxDailyHour = Math.max(10, ...chartData.map(d => d.hours));
+  const daysMetTarget = chartData.filter(d => d.hours >= d.target).length;
+  const targetMetPercent = chartData.length > 0 ? Math.round((daysMetTarget / chartData.length) * 100) : 0;
+  const totalStudyHoursInRange = Math.round(chartData.reduce((sum, d) => sum + d.hours, 0) * 10) / 10;
+  const averageDailyHours = chartData.length > 0 ? (totalStudyHoursInRange / chartData.length).toFixed(1) : '0.0';
 
   // Subject distribution
   const subjectHours = (subjects || []).map(s => ({
@@ -164,34 +200,59 @@ export const AnalyticsView: React.FC = () => {
                 <h3 className="text-base font-extrabold text-slate-900 uppercase tracking-wider font-['Plus_Jakarta_Sans']">
                   DAILY STUDY CONSISTENCY (HOURS)
                 </h3>
-                <p className="text-xs text-slate-500 mt-0.5">Target: 5.5 hours/day (Job + UPSC)</p>
+                <p className="text-xs text-slate-500 mt-0.5">Target: {targetHours} hours/day ({mode === 'FULL-TIME UPSC' ? 'Full-Time' : 'Job + UPSC'})</p>
               </div>
-              <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200">
-                100% Target Met
+              <span className={`text-xs font-bold px-2.5 py-1 rounded-full border ${
+                targetMetPercent >= 80
+                  ? 'text-emerald-700 bg-emerald-50 border-emerald-200'
+                  : targetMetPercent >= 50
+                    ? 'text-indigo-700 bg-indigo-50 border-indigo-200'
+                    : 'text-amber-700 bg-amber-50 border-amber-200'
+              }`}>
+                {targetMetPercent}% Target Met
               </span>
             </div>
 
             {/* High-Fidelity Responsive Bar Chart */}
-            <div className="h-60 flex items-end justify-between gap-3 pt-6 pb-2 border-b border-slate-100">
-              {past7DaysData.map((d, i) => {
-                const heightPercent = Math.min(100, (d.hours / maxDailyHour) * 100);
+            <div className={`h-60 flex items-end justify-between ${timeRange === '7' ? 'gap-2 sm:gap-3' : timeRange === '14' ? 'gap-1.5' : 'gap-1'} pt-6 pb-2 border-b border-slate-100 overflow-x-auto`}>
+              {chartData.map((d) => {
+                const heightPercent = maxDailyHour > 0 ? Math.min(100, (d.hours / maxDailyHour) * 100) : 0;
                 const isAboveTarget = d.hours >= d.target;
                 return (
-                  <div key={i} className="flex-1 flex flex-col items-center h-full justify-end group">
+                  <div key={d.dateStr} className="flex-1 min-w-[28px] sm:min-w-0 flex flex-col items-center h-full justify-end group">
                     {/* Tooltip on hover */}
-                    <span className="text-[10px] font-black text-indigo-700 mb-1 opacity-80 group-hover:opacity-100 font-mono">
+                    <span className={`text-[10px] font-black mb-1 font-mono transition-opacity ${
+                      d.isToday 
+                        ? 'text-indigo-800 font-extrabold opacity-100' 
+                        : 'text-indigo-700 opacity-80 group-hover:opacity-100'
+                    }`}>
                       {d.hours}h
                     </span>
-                    <div className="w-full max-w-[36px] bg-slate-100 rounded-t-xl h-full flex items-end overflow-hidden p-0.5">
+                    <div className={`w-full ${timeRange === '7' ? 'max-w-[36px]' : timeRange === '14' ? 'max-w-[24px]' : 'max-w-[16px]'} bg-slate-100 rounded-t-xl h-full flex items-end overflow-hidden p-0.5 ${
+                      d.isToday ? 'ring-2 ring-indigo-500 ring-offset-1' : ''
+                    }`}>
                       <div
                         className={`w-full rounded-t-lg transition-all duration-500 ${
-                          isAboveTarget ? 'bg-gradient-to-t from-indigo-600 to-indigo-500' : 'bg-amber-400'
+                          d.hours === 0
+                            ? 'h-0'
+                            : isAboveTarget 
+                              ? 'bg-gradient-to-t from-indigo-600 to-indigo-500' 
+                              : 'bg-amber-400'
                         }`}
                         style={{ height: `${heightPercent}%` }}
                       />
                     </div>
-                    <span className="text-[11px] font-bold text-slate-800 mt-2">{d.day}</span>
-                    <span className="text-[9px] text-slate-400 font-mono">{d.date}</span>
+                    <span className={`text-[11px] mt-2 ${d.isToday ? 'font-black text-indigo-950' : 'font-bold text-slate-800'}`}>
+                      {d.day}
+                    </span>
+                    <span className={`text-[9px] font-mono whitespace-nowrap ${d.isToday ? 'font-bold text-indigo-600' : 'text-slate-400'}`}>
+                      {d.date}
+                    </span>
+                    {d.isToday && (
+                      <span className="text-[8px] font-extrabold uppercase tracking-wider text-indigo-700 bg-indigo-50 px-1 rounded mt-0.5">
+                        Today
+                      </span>
+                    )}
                   </div>
                 );
               })}
@@ -199,8 +260,10 @@ export const AnalyticsView: React.FC = () => {
           </div>
 
           <div className="mt-4 pt-3 flex items-center justify-between text-xs text-slate-500">
-            <span>Average Daily Hours: <strong>6.2 hrs/day</strong></span>
-            <span className="text-emerald-600 font-bold">Consistently exceeding baseline</span>
+            <span>Average Daily Hours: <strong>{averageDailyHours} hrs/day</strong></span>
+            <span className={Number(averageDailyHours) >= targetHours ? 'text-emerald-600 font-bold' : 'text-amber-600 font-bold'}>
+              {Number(averageDailyHours) >= targetHours ? 'Consistently exceeding baseline' : `${totalStudyHoursInRange} total hrs in this period`}
+            </span>
           </div>
         </div>
 
